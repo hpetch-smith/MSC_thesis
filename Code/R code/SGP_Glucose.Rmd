@@ -1,0 +1,119 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Single ouptput GP
+In order to compare the efficacy of the mutliple output Gaussian process i am comparing with the standard single output model. To do this i used Gaupro - a library that implements the gaussian process with the Gaussian kernel function.
+
+```{r}
+library(GauPro)
+```
+
+I insoected the data as follows
+```{r}
+# Set directory
+setwd('~/Individual project/data/Cont_gluc/Days')
+# Load in first day
+day1 <- read.csv('2015-05-11.csv')
+# Inspect
+View(day1)
+```
+
+```{r}
+library(ggplot2)
+
+day1 = day1
+
+# Set x and y values 
+x = day1$minutes
+y = day1$GlucoseValue
+
+# Visualize 
+ggplot(data = day1, aes(x = x, y = y)) + geom_point(colour = 'purple') + theme(axis.text.x=element_text(color="#993333",size=2, angle=90)) + ggtitle('2017-07-15 Continous monitoring glucose data') + xlab('Time (minutes)') + ylab('Glucose Value')
+```
+The same was done for day2
+
+```{r}
+# Set directory to data 
+setwd('~/Individual project/data/Cont_gluc/Days')
+
+# Read day 2 file 
+day2 <- read.csv('2015-05-12.csv')
+
+# Inspect
+View(day2)
+```
+```{r}
+library(ggplot2)
+# Get 279 entries of day 2 so sizes are equal
+day2 <- day2[1:279,]
+
+# Set x and y values
+x = day2$minutes
+y = day2$GlucoseValue
+
+# Visualise 
+ggplot(data = day2, aes(x = x, y = y)) + geom_point(colour = 'red') + theme(axis.text.x=element_text(color="#993333",size=8, angle=90)) + ggtitle('2017-07-16 Continous monitoring glucose data') + xlab('Time (minutes)') + ylab('Glucose Value')
+```
+Next I built and ran the model on the data.
+As with the multiple output model I first defined the time series and y values for each dataset to insert into the model.
+
+```{r}
+# Time series for day1
+t1 <- day1$minutes
+#Y vakues for day1
+y1 <- day1$GlucoseValue
+
+#Time series for day2
+t2 <- day2$minutes
+# Y values for day2
+y2 <- day2$GlucoseValue
+
+# Overall total of time series 
+T = day1$minutes
+```
+
+
+```{r}
+# --- DAY 1 -----------------------------------------------------------------------------------------
+library(GauPro)
+
+# Set x and y values
+x = day1$minutes
+y = day1$GlucoseValue
+
+# Define the GP with x and y values 
+gp <- GauPro(x, y, parallel=FALSE)
+
+# Visualise the model
+ggplot(data = data.frame(t1,y1), aes(t1, y1)) + 
+  geom_ribbon(aes(ymin = gp$predict(x)+2*gp$predict(x, se=T)$se, ymax = gp$predict(x)-2*gp$predict(x, se=T)$se), colour = '#558587', fill = '#558587', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t1,Y1), aes(x = t1, Y1), size = 1.2, colour = '#0886bd') +
+  geom_line(data.frame(x,gp$predict(x)),mapping = aes(x, y=gp$predict(x) ),colour = '#0886bd', size = 1)  + xlab('Time (Minutes)') + ylab('Glucose Value') + ggtitle('2017-07-15 Posterior Output') + theme(panel.border = element_rect(colour = "#381fab", fill=NA, size=2))
+```
+The same was done for Day 2
+
+```{r}
+# Reassign x and y values
+x = day2$minutes
+y = day2$GlucoseValue
+
+library(GauPro)
+
+# Define the model with x and y
+gp <- GauPro(x, y, parallel=FALSE)
+
+# Visualise the model
+ggplot(data = data.frame(t2,y2), aes(t2, y2)) + 
+  geom_ribbon(aes(ymin = gp$predict(x)+2*gp$predict(x, se=T)$se, ymax = gp$predict(x)-2*gp$predict(x, se=T)$se), colour = '#ED829C', fill = '#ED829C', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t2,Y2), aes(x = t2, Y2), size = 1.2, colour = 'red') +
+  geom_line(data.frame(x,gp$predict(x)),mapping = aes(x, y=gp$predict(x) ),colour = 'blue', size = 1)  + xlab('X') + ylab('Sin(2X)') + ggtitle('') + theme(panel.border = element_rect(colour = "#381fab", fill=NA, size=2))
+```
+
+
+
+
+

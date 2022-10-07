@@ -1,0 +1,301 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+# Simulated Data 
+
+In order to test if my model is working I simulated some very simple sin(x) data, I randomly generated a set of timepoints (x) and then generated two strongly related data sets f(x), were the second dataset is simply a shifted version of the first. The multiple output GP should take this relationship into account and produce more accurate predictions.
+
+```{r}
+library("RColorBrewer")
+source('~/Individual project/Code/R code/2GP_functions.R')
+# ========Data=================
+# data points
+L <- 80 
+
+# Two functions - g is a shifted version of f
+f <- function(x){ sin(2*x)}
+g <- function(x){ sin(2*sqrt(2)*x+pi/4)}
+
+# Simulate time points
+Ti <- seq(0, 4*pi, length = L)
+
+# Calculate Y values
+y1 <- f(Ti)
+y2 <- g(Ti)
+```
+
+I plotted the functions below. Both show a clear sine wave with the black function being shifted slightly.
+
+```{r}
+library(ggplot2)
+# Plot functions 
+ plot1 <- ggplot(data.frame(Ti,y1),aes(x = Ti)) + 
+  geom_point(aes(y = y1,colour = 'blue')) + geom_line(aes(y=y1,colour = 'blue')) + geom_point(aes(y = y2, colour = 'red')) + geom_line(aes(y = y2, colour = 'red')) + xlab('X') + ylab('Y') + ggtitle('Sin(2x) and Sin(2*sqrt(2)*x+pi/4) Data') +theme(legend.position="right",
+        legend.title=element_blank())+ scale_colour_discrete(labels = c('Sin(2*sqrt(2)*x+pi/4)','Sin(2x)'))
+```
+
+Next I added Gaussian noise to add some uncertainty to the data.
+
+```{r}
+# Simulate noise from a Gaussian distribution
+noise <- rnorm(length(y1) + length(y2), 0, sd = 0.15)
+```
+
+The noise was added below.
+
+```{r}
+# Store noise values in vectors
+noise1 <- noise[1:L]
+noise2 <- noise[(L+1):length(noise)]
+
+# gneerate time series and add noise to y values
+t1 <- Ti
+Y1 <- y1 + noise1
+t2 <- Ti
+Y2 <- y2 + noise2
+
+library(ggplot2)
+
+# Visualise noisy data 
+plot2 <- ggplot(data.frame(Ti,Y1),aes(x = Ti)) + 
+  geom_point(aes(y = Y1,colour = 'blue')) + geom_line(aes(y=Y1,colour = 'blue')) + geom_point(aes(y = Y2, colour = 'red')) + geom_line(aes(y = Y2, colour = 'red')) + xlab('X') + ylab('Y') + ggtitle('Sin(2x) and Sin(2*sqrt(2)*x+pi/4) Data + Noise') + scale_colour_discrete(labels = c('Sin(2*sqrt(2)*x+pi/4)','Sin(2x)')) + theme(legend.position="right",
+        legend.title=element_blank())
+```
+
+I created a figure for my report showing the noisy data visualization
+
+```{r}
+library(ggpubr)
+# Generate figure panel
+ggarrange(plot1, plot2, 
+          labels = c("A", "B"),nrow = 2,heights = 10)
+```
+
+
+In order to make predictions and test the model i Isolated the final 10 datapoints from the time series. These will be predicted by the model and overlay-ed to assess the accuracy of the model.
+
+```{r}
+# Convert to  data frame
+df <- data.frame(Ti,Y2)
+# get final 10 datapoints
+tails <- tail(df,10)
+# Remove final 10 points from data
+df <- head(df,-10)
+```
+
+Next I constructed the multiple output model on the simulated data.
+
+The parameters were assumed to come from a normal distribution as below.
+```{r}
+#--------Hyper-parameters--------------------------------------------
+mean_vi <- 0
+sd_vi <- 3
+
+mean_wi <- 0
+sd_wi <- 3
+
+mean_fi <- 0
+sd_fi <- 3
+
+mean_gi <- 0
+sd_gi <- 3
+
+mean_bi <- -2
+sd_bi <- 3
+
+mean_mu <- 0.5
+sd_mu <- 3
+
+# Priors are stored in single vector
+pr_par <- c(mean_vi, sd_vi, mean_wi, sd_wi, mean_fi, sd_fi, mean_gi, sd_gi, mean_bi, sd_bi, mean_mu, sd_mu)
+```
+
+
+Now I have my priors the model was ran on the simulated data.
+
+```{r}
+# Run optimisation fucntions
+par_optim <- optim(par, log_lik, method = "Nelder-Mead", Y = Y, t1 = t1, t2 = t2, prior = pr_par)
+# Get optimised parameters
+par_opt <- par_optim$par
+# Get covariance with optimised parameters
+C <- Covariance(par_opt, t1, t2)
+# Matrix deteriation
+C_I <- solve(C)
+# Get all time series 
+s_in <- seq(min(Ti), max(Ti), length = 200)
+```
+
+Outputs were generated
+
+```{r}
+#----------------OUTPUT1_Y1------------------------------------------------------------------------
+# Cross covariance 
+PR12 <- c(par_opt[1], par_opt[6], par_opt[3], par_opt[8], par_opt[11]) #v1 v2 f1 f2 mu
+# Autocovariance
+PR11 <- par_opt[1:4] # v1,w1,f1,g1
+# K
+kapa1 <- C_ii(PR11, 0) + exp(par_opt[5])^2   # or kapa1 = par_opt(1)^2+par_opt(2)^2+exp(par_opt(5))^2   #v_1^2 + w_1^2 + sigma_1^2
+
+# Empty vectors for outputs and standard deviation
+output1 <- c()
+sg_sqr1 <- c()
+
+# Loop though each time point
+for (j in 1:length(s_in)){
+	k1 <- c()
+	# Calculate K1
+        for (i in 1:N1){
+            k1 <- c(k1, C_ii(PR11, s_in[j] - t1[i]))
+        }
+        for (ii in 1:N2){
+            k1 <- c(k1, C_12(PR12, s_in[j] - t2[ii]))
+        }
+	# Store output and error values
+        output1 <- c(output1, t(k1) %*% C_I %*% Y)
+        sg_sqr1 <- c(sg_sqr1, kapa1 - t(k1) %*% C_I %*% k1)
+ }
+```
+
+```{r}
+# Autocovariance (Cross covariance same as above)
+PR22 <- par_opt[6:9] # v2,w2,f2,g2
+# K
+kapa2 <- C_ii(par_opt[6:9], 0) + exp(par_opt[10])^2 # or kapa2 = par_opt(6)^2+par_opt(7)^2+exp(par_opt(10))^2;
+output2 <- c()
+sg_sqr2 <-c()
+# Loop through time series 
+for (j in 1:length(s_in)){
+    k2 <- c()
+    # Calculate K2
+    for (i in 1:N1){
+        k2 <- c(k2, C_21(PR12, s_in[j] - t1[i]))
+    }
+    for (ii in 1:N2){
+        k2 <- c(k2, C_ii(PR22, s_in[j] - t2[ii]))
+    }
+    # Store ouputs and error
+    output2 <- c(output2, t(k2) %*% C_I %*% Y)
+    sg_sqr2 <- c(sg_sqr2, kapa2 - t(k2) %*% C_I %*% k2)
+}
+```
+
+```{r}
+# Get upper and lower confidnce intervals for y1
+par(mfrow=c(1,2))
+y1.low  = output1 - 2 * sqrt(sg_sqr1)
+y1.high = output1 + 2 * sqrt(sg_sqr1)
+```
+
+
+```{r}
+# Get upper and lower confidence intervals for y2
+y2.low  = output2 - 2 * sqrt(sg_sqr2)
+y2.high = output2 + 2 * sqrt(sg_sqr2)
+```
+
+Now that we have an ouput i can visulaise it as follows
+
+```{r}
+library(ggplot2)
+# Graph 1
+mo1 <- ggplot(data = data.frame(s_in,output1), aes(x = s_in, y = output1)) + 
+  geom_ribbon(aes(ymin = y1.low, ymax = y1.high), colour = '#558587', fill = '#558587', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t1,Y1), aes(x = t1, Y1), size = 1.2, colour = '#0886bd') +
+  geom_line(data = data.frame(s_in,output1), aes(x = s_in, y = output1), colour = '#0886bd', size = 1) + xlab('X') + ylab('Sin(2X)') + ggtitle('Multiple Output Sin(2X) Posterior') + theme(panel.border = element_rect(colour = "#207a52", fill=NA, size=2))
+```
+
+```{r}
+library(ggplot2)
+# Graph 2
+mo2 <- ggplot(data = data.frame(s_in,output2), aes(x = s_in, y = output2)) + 
+  geom_ribbon(aes(ymin = y2.low, ymax = y2.high), colour = '#d69fa9', fill = '#d69fa9', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t2,Y2), aes(x = t2, Y2), size = 1.2, colour = 'red') +
+  geom_line(data = data.frame(s_in,output2), aes(x = s_in, y = output2), colour = '#870c23', alpha = 0.8, size = 1) + xlab('X') + ylab('Sin(2*sqrt(2)*x+pi/4)') + ggtitle('Multiple Output Sin(2*sqrt(2)*x+pi/4) Posterior') + theme(panel.border = element_rect(colour = "#207a52", fill=NA, size=2))
+```
+
+
+
+```{r}
+# Combined
+mo3 <- ggplot(data = data.frame(s_in,output1), aes(x = s_in, y = output1)) + 
+  geom_ribbon(aes(ymin = y1.low, ymax = y1.high), colour = '#558587', fill = '#558587', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t1,Y1), aes(x = t1, Y1), size = 1.2, colour = '#0886bd') +
+  geom_line(data = data.frame(s_in,output1), aes(x = s_in, y = output1), colour = '#0886bd', size = 1) + xlab('X') + ylab('Sin(2X)') + ggtitle('Multiple Output Sin(2X) Posterior') + geom_ribbon(aes(ymin = y2.low, ymax = y2.high), colour = '#d69fa9', fill = '#d69fa9', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t2,Y2), aes(x = t2, Y2), size = 1.2, colour = 'red') +
+  geom_line(data = data.frame(s_in,output2), aes(x = s_in, y = output2), colour = '#870c23', alpha = 0.8, size = 1) + xlab('X') + ylab('Y') + ggtitle('Multiple Output Posterior') + theme(panel.border = element_rect(colour = "#207a52", fill=NA, size=2))
+```
+
+
+Finally i Ran the single output model on the same data
+
+```{r}
+# x for output 1
+x = t1
+# y for output 1
+y = Y1
+library(GauPro)
+# gp model 1
+gp <- GauPro(x, y, parallel=FALSE)
+```
+
+
+```{r}
+# x for output 2
+x2 = t2
+# y for ouput 2
+y2 = Y2
+library(GauPro)
+# gp model 2
+gp2 <- GauPro(x2, y2, parallel=FALSE)
+```
+
+
+```{r}
+library(ggplot2)
+# Graph gp 1
+so1 <- ggplot(data = data.frame(t1,y1), aes(t1, y1)) + 
+  geom_ribbon(aes(ymin = gp$predict(x)+2*gp$predict(x, se=T)$se, ymax = gp$predict(x)-2*gp$predict(x, se=T)$se), colour = '#558587', fill = '#558587', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t1,Y1), aes(x = t1, Y1), size = 1.2, colour = '#0886bd') +
+  geom_line(data.frame(x,gp$predict(x)),mapping = aes(x, y=gp$predict(x) ),colour = '#0886bd', size = 1)  + xlab('X') + ylab('Sin(2X)') + ggtitle('Single Output Sin(2X) Posterior') + theme(panel.border = element_rect(colour = "#381fab", fill=NA, size=2))
+```
+
+```{r}
+library(ggplot2)
+# Graph gp 2
+so2 <- ggplot(data = data.frame(t2,y2), aes(t2, y2)) + 
+  geom_ribbon(aes(ymin = gp2$predict(x2)+2*gp2$predict(x2, se=T)$se, ymax = gp$predict(x2)-2*gp$predict(x2, se=T)$se), colour = '#558587', fill = '#558587', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t2,Y2), aes(x = t2, Y2), size = 1.2, colour = '#0886bd') +
+  geom_line(data.frame(x2,gp2$predict(x2)),mapping = aes(x2, y=gp$predict(2) ),colour = '#0886bd', size = 1)  + xlab('X') + ylab('Sin(2X)') + ggtitle('Single Output Sin(2X) Posterior') + theme(panel.border = element_rect(colour = "#381fab", fill=NA, size=2))
+```
+
+```{r}
+# Combined plot
+so3 <- ggplot(data = data.frame(t1,y1), aes(t1, y1)) + 
+  geom_ribbon(aes(ymin = gp$predict(x)+2*gp$predict(x, se=T)$se, ymax = gp$predict(x)-2*gp$predict(x, se=T)$se), colour = '#558587', fill = '#558587', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t1,Y1), aes(x = t1, Y1), size = 1.2, colour = '#0886bd') +
+  geom_line(data.frame(x,gp$predict(x)),mapping = aes(x, y=gp$predict(x) ),colour = '#0886bd', size = 1)  + geom_ribbon(aes(ymin = gp2$predict(x)+2*gp2$predict(x, se=T)$se, ymax = gp2$predict(x)-2*gp2$predict(x, se=T)$se),colour = '#d69fa9', fill = '#d69fa9', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t2,Y2), aes(x = t2, Y2), size = 1.2, colour = 'red') +
+  geom_line(data.frame(x,gp2$predict(x)),mapping = aes(x, y=gp2$predict(x) ),colour = '#870c23', alpha = 0.8, size = 1)  + xlab('X') + ylab('Y') + ggtitle('Single Output Posterior') + theme(panel.border = element_rect(colour = "#381fab", fill=NA, size=2))
+```
+
+
+
+```{r, out.width = 50% ,out.height = 50%}
+# Combine the plots for publication
+library(ggpubr)
+ggarrange(mo1,so1,
+          mo2,so2,
+          mo3,so3,
+          nrow = 3,ncol = 2,labels = c('A','D',
+                                       'B','E',
+                                       'C','F'
+                                       ))
+```
+
+
+
+

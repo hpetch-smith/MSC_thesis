@@ -1,0 +1,247 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+
+```{r}
+# Set directory
+setwd('C:/Users/Harry/Documents/Individual project/data/Cont_gluc/Days')
+# Load in first day
+day1 <- read.csv('2015-05-11.csv')
+
+day2 <- read.csv('2015-05-12.csv')
+day2 <- day2[1:279,]
+day2 <- head(day2,-10)
+
+```
+
+
+```{r}
+setwd('C:/Users/Harry/Documents/Individual project/data/Cont_gluc/Days')
+day2_full <- read.csv('2015-05-12.csv')
+day2_full <- day2_full[1:279,]
+```
+
+
+```{r}
+source('C:/Users/Harry/Documents/Individual project/Code/R code/2GP_functions.R')
+```
+
+
+
+```{r}
+# Time series for day1
+t1 <- day1$minutes
+#Y vakues for day1
+Y1 <- day1$GlucoseValue
+
+#Time series for day2
+t2 <- day2$minutes
+# Y values for day2
+Y2 <- day2$GlucoseValue
+
+T = day1$minutes
+```
+
+
+```{r}
+# vector with both time series 
+t <- c(t1, t2)
+# Vector with Y values
+Y <- c(Y1, Y2)
+# Y should be 134*2
+length(Y)
+# number of samples in each series - 134
+N1 <- length(t1)
+N2 <- length(t2)
+```
+
+```{r}
+library(ggplot2)
+# df for day1
+day1 <- data.frame(x = t1, y = Y1)
+#df for day2
+day2 <- data.frame(x = t2, y = Y2)
+
+# plot
+ggplot() + 
+geom_line(data=day1, aes(x, y,group = 1), color='purple') + 
+geom_line(data=day2, aes(x, y, group = 1), color='red') + ggtitle('2015-05-11 and 2015-05-12 Continous monitoring glucose data') + xlab('Time (minutes)') + ylab('Glucose Value')
+ggsave('shared.pdf')
+```
+
+```{r}
+mean_vi <- 0
+sd_vi <- 3
+
+mean_wi <- 0
+sd_wi <- 3
+
+mean_fi <- 0
+sd_fi <- 3
+
+mean_gi <- 0
+sd_gi <- 3
+
+mean_bi <- -2
+sd_bi <- 1
+
+mean_mu <- 0.5
+sd_mu <- 4
+
+pr_par <- c(mean_vi, sd_vi, mean_wi, sd_wi, mean_fi, sd_fi, mean_gi, sd_gi, mean_bi, sd_bi, mean_mu, sd_mu)
+```
+
+```{r}
+#--------Optimisation--------------------------------------------
+vi <- rnorm(2, mean_vi, sd = sd_vi) # A_i = \exp{f_i}, B_i = \exp{g_i}; \sigma_i = \exp{\beta_i}, so I will need to square it later
+wi <- rnorm(2, mean_wi, sd = sd_wi)
+fi <- rnorm(2, mean_fi, sd = sd_fi)
+gi <- rnorm(2, mean_gi, sd = sd_gi)
+bi <- rnorm(2, mean_bi, sd = sd_bi)
+mu <- rnorm(1, mean_mu, sd = sd_mu)
+
+par <- c(vi[1], wi[1], fi[1], gi[1], bi[1], vi[2], wi[2], fi[2], gi[2], bi[2], mu) #parameters to estimate; [v1 w1 f1 g1 Beta1 v2 w2 f2 g2 Beta2 mu];
+```
+
+```{r}
+D <- Covariance(par, t1, t2)
+df <- data.frame(matrix(unlist(D), nrow=length(D), byrow=TRUE))
+```
+
+
+```{r}
+print(det(D))
+if (det(D) < 0){ 
+    	vi <- rnorm(2, mean_vi, sd = sd_vi) # A_i = \exp{f_i}, B_i = \exp{g_i}; \sigma_i = \exp{\beta_i}, so I will need to square it later
+	wi <- rnorm(2, mean_wi, sd = sd_wi)
+	fi <- rnorm(2, mean_fi, sd = sd_fi)
+	gi <- rnorm(2, mean_gi, sd = sd_gi)
+	bi <- rnorm(2, mean_bi, sd = sd_bi)
+	mu <- rnorm(1, mean_mu, sd = sd_mu)
+	par <- c(vi[1], wi[1], fi[1], gi[1], bi[1], vi[2], wi[2], fi[2], gi[2], bi[2], mu)
+    	D1 <- Covariance(par, t1, t2)
+    	if (det(D1) > 0 ){break}
+}
+```
+
+```{r}
+source('C:/Users/Harry/Documents/Individual project/Code/R code/2GP_functions.R')
+par_optim <- optim(par, log_lik, method = "Nelder-Mead", Y = Y, t1 = t1, t2 = t2, prior = pr_par)
+```
+
+```{r}
+par_opt <- par_optim$par
+C <- Covariance(par_opt, t1, t2)
+C_I <- solve(C)
+s_in <- seq(min(day2_full$minutes), max(day2_full$minutes), length = length(day2_full$minutes))
+print(par_opt)
+```
+
+```{r}
+#----------------OUTPUT1_Y1------------------------------------------------------------------------
+PR12 <- c(par_opt[1], par_opt[6], par_opt[3], par_opt[8], par_opt[11]) #v1 v2 f1 f2 mu
+PR11 <- par_opt[1:4] # v1,w1,f1,g1
+kapa1 <- C_ii(PR11, 0) + exp(par_opt[5])^2   # or kapa1 = par_opt(1)^2+par_opt(2)^2+exp(par_opt(5))^2   #v_1^2 + w_1^2 + sigma_1^2
+output1 <- c()
+sg_sqr1 <- c()
+for (j in 1:length(s_in)){
+	k1 <- c()
+        for (i in 1:N1){
+            k1 <- c(k1, C_ii(PR11, s_in[j] - t1[i]))
+        }
+        for (ii in 1:N2){
+            k1 <- c(k1, C_12(PR12, s_in[j] - t2[ii]))
+        }
+        output1 <- c(output1, t(k1) %*% C_I %*% Y)
+        sg_sqr1 <- c(sg_sqr1, kapa1 - t(k1) %*% C_I %*% k1)
+}
+
+png(filename="simple_graphic.png", width = 2000, height = 2000, res = 350)
+
+y1.low  = output1 - 2 * sqrt(sg_sqr1)
+y1.high = output1 + 2 * sqrt(sg_sqr1)
+plot(s_in, output1, type = "n", xlab = "time (minutes)", ylab = "Glucose value",  cex.lab=1.5, cex.axis=1.5)
+lines(s_in, y1.low,  col = "olivedrab3")
+lines(s_in, y1.high, col = "olivedrab3")
+polygon( c(s_in, rev(s_in)), c(y1.high, rev(y1.low)), col = "olivedrab3", border = NA)
+lines(s_in, output1,  type = "l", lwd=3, col = "royalblue3")
+points(t1, Y1, col = "orangered3", pch=20, cex = 0.9)
+dev.off()
+```
+
+```{r}
+#----------------OUTPUT2_Y2-------------------------------------------------------------------------
+PR22 <- par_opt[6:9] # v2,w2,f2,g2
+kapa2 <- C_ii(par_opt[6:9], 0) + exp(par_opt[10])^2 # or kapa2 = par_opt(6)^2+par_opt(7)^2+exp(par_opt(10))^2;
+output2 <- c()
+sg_sqr2 <-c()
+for (j in 1:length(s_in)){
+    k2 <- c()
+    for (i in 1:N1){
+        k2 <- c(k2, C_21(PR12, s_in[j] - t1[i]))
+    }
+    for (ii in 1:N2){
+        k2 <- c(k2, C_ii(PR22, s_in[j] - t2[ii]))
+    }
+    output2 <- c(output2, t(k2) %*% C_I %*% Y)
+    sg_sqr2 <- c(sg_sqr2, kapa2 - t(k2) %*% C_I %*% k2)
+}
+
+y2.low  = output2 - 2 * sqrt(sg_sqr2)
+y2.high = output2 + 2 * sqrt(sg_sqr2)
+plot(s_in, output2, type = "n", xlab = "Time (minutes)", ylab = "glucose value",  cex.lab=1.5, cex.axis=1.5)
+lines(s_in, y2.low,  col = "olivedrab3")
+lines(s_in, y2.high, col = "olivedrab3")
+polygon( c(s_in, rev(s_in)), c(y2.high, rev(y2.low)), col = "olivedrab3", border = NA)
+lines(s_in, output2,  type = "l", lwd=3, col = "royalblue3")
+points(t2, Y2, col = "orangered3", pch=20, cex = 1.5)
+#dev.off()
+#write.table(par_opt, "2sin_par_8080.txt",row.names=FALSE, col.names=FALSE)
+print(log_lik(par,Y,t1,t2,pr_par))
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(data = data.frame(s_in,output1), aes(x = s_in, y = output1)) + 
+  geom_ribbon(aes(ymin = y1.low, ymax = y1.high), colour = '#9BA3F0', fill = '#9BA3F0', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t1,Y1), aes(x = t1, Y1), size = 0.4, colour = 'red') +
+  geom_line(data = data.frame(t1,output1), aes(x = s_in, y = output1), colour = 'green', alpha = 0.8, size = 0.4) + xlab('Time (Minutes)') + ylab('Glucose Value')
+```
+```{r echo=TRUE}
+library(ggplot2)
+day2_full <- tail(day2_full,10)
+ plot1 <- ggplot(data = data.frame(s_in,output2), aes(x = s_in, y = output2)) + 
+  geom_ribbon(aes(ymin = y2.low, ymax = y2.high), colour = '#d69fa9', fill = '#d69fa9', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t2,Y2), aes(x = t2, Y2), size = 1.2, colour = 'red') +
+  geom_point(data = day2_full,aes(x = day2_full$minutes, y = day2_full$GlucoseValue), size = 1.2, colour= '#05a150') +
+  geom_line(data = data.frame(s_in,output2), aes(x = s_in, y = output2), colour = '#870c23', alpha = 0.8, size = 1) + xlab('Time (Minutes)') + ylab('Glucose Value') + ggtitle('Multiple Output Final 10 Predictions 2015/05/12') + theme(panel.border = element_rect(colour = "#207a52", fill=NA, size=2))
+```
+
+
+
+```{r}
+x = t2
+y = Y2
+library(GauPro)
+gp <- GauPro(x, y, parallel=FALSE)
+```
+
+```{r}
+x = T
+plot2 <- ggplot(data = data.frame(t1,Y1), aes(x = t1,y = Y1)) + 
+  geom_ribbon(aes(ymin = gp$predict(x)+2*gp$predict(x, se=TRUE)$se, ymax = gp$predict(x)-2*gp$predict(x, se=TRUE)$se),colour = '#d69fa9', fill = '#d69fa9', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t2,Y2), aes(x = t2, Y2), size = 1.2, colour = 'red') +
+  geom_line(data.frame(x,gp$predict(x)),mapping = aes(x, y=gp$predict(x) ),colour = '#870c23', alpha = 0.8, size = 1) + geom_point(data = day2_full,aes(x = day2_full$minutes, y = day2_full$GlucoseValue), size = 1.2, colour= '#05a150')  + xlab('Time (minutes)') + ylab('Glucose value') + ggtitle('Single Output Final 10 Predictions 2015/05/12') + theme(panel.border = element_rect(colour = "#381fab", fill=NA, size=2))
+```
+
+```{r}
+library(ggpubr)
+ggarrange(plot1,plot2,
+          nrow = 2,labels = c('A','B'))
+```
+

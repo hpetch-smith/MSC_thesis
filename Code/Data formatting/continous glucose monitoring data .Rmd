@@ -1,0 +1,241 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+# Clear global env
+rm(list = ls())
+
+# Set working directory to data
+setwd('/Users/harrypetchsmith/Msc Bionformatics/Individual project/data')
+```
+
+
+# Glucotypes reveal new patterns of glucose dysregulation
+
+Link: https://journals.plos.org/plosbiology/article?id=10.1371/journal.pbio.2005143#sec011
+
+S1 Data. Continuous glucose monitor recordings.
+Glucose concentration recorded every 5 minutes. Columns are DisplayTime (time stamp of recording as shown by the monitor, used for analysis), GlucoseValue (glucose concentration in mg/dl), subjectId (participant id), and InternalTime (internal time stamp of recording).
+
+https://doi.org/10.1371/journal.pbio.2005143.s010
+
+This data is from an experiment that measured continuous readings from both healthy and non healthy individuals. In this book I will inspect and preprocess the data. 
+
+The meta data can be viewed here 
+
+```{r}
+setwd('C:\\Users\\Harry\\Documents\\Individual project\\data\\Cont_gluc')
+
+library(RSQLite)
+
+filename <- "pbio.2005143.s014.db"
+sqlite.driver <- dbDriver("SQLite")
+db <- dbConnect(sqlite.driver,
+                dbname = filename)
+                
+## Some operations
+dbListTables(db)
+mytable <- dbReadTable(db,"clinical")
+```
+
+
+```{r}
+View(mytable)
+```
+
+
+## 1. Reading in the data
+
+I read in the data as follows:
+
+```{r}
+# Read in data with tab delimination
+data <- read.table('/Users/harrypetchsmith/Msc Bionformatics/Individual project/data/cont_gluc/pbio.2005143.s010',header = T,sep = '\t')
+```
+
+we can then  inspect:
+
+```{r}
+# Inspect the data 
+View(data)
+```
+
+## 2. formatting the data 
+
+The internal time column has the date and time as one string. I want to seperate by time and into individual days, so these will have to be separated into separate columns.
+
+I've written functions to parse the dates and times in the DisplayTime column. These can be found in Helpers.R
+
+```{r}
+# Load helper functions
+source('Helpers.R')
+
+# Get dates and times from first column
+dates_times <-as.array(data[,'InternalTime'])
+
+# Get length for progress indicator
+len <- length(dates_times)
+
+# Create arrays for dates and times
+dates <-list()
+times <- list()
+
+# loop through each entry
+for (i in 1:length(dates_times)){
+  
+  # parse dates and times using helper functions
+  new_date <- get_date(dates_times[[i]])
+  new_time <- get_time(dates_times[[i]])
+  # Add to empty lists 
+  dates <- append(dates, new_date)
+  times <- append(times, new_time)
+}
+
+# Check output 
+head(dates)
+head(times)
+```
+
+Now i can reformat the dates to remove the commas and add to the original data.
+
+```{r}
+# loop through dates 
+for (i in 1:length(dates)){
+  # add to df
+  data[i,'date'] <- dates[[i]]
+}
+```
+
+Same as above for times:
+
+```{r}
+# loop through times
+for (i in 1:length(dates)){
+  # replace commas and add to df
+  data[i,'time'] <- times[[i]]
+}
+
+View(data)
+```
+
+Finally i can remove the redundant columns from the data and save it.
+
+```{r}
+# Set columns to remove
+rem <- c('DisplayTime', 'InternalTime')
+
+# Filter out columns
+final_data <- data[ , !(names(data) %in% rem)]
+
+# Reorder columns with date and time first
+final_data <- final_data[,c(3,4,1,2)]
+
+
+# Set working directory to data
+setwd('/Users/harrypetchsmith/Msc Bionformatics/Individual project/data/Cont_gluc')
+
+# Save 
+write.csv(final_data,file = 'Cont_monit_data.csv')
+```
+
+```{r}
+# Inspect
+View(final_data)
+```
+
+Finally I can convert the times into minutes to make it easier for the model to process.
+
+```{r}
+library(lubridate)
+times2 <- hms(times) 
+minutes <- hour(times2)*60 + minute(times2)
+final_data['minutes'] <- minutes
+```
+
+
+
+```{r}
+View(final_data)
+```
+
+
+```{r}
+# Set working directory to data
+setwd('/Users/harrypetchsmith/Msc Bionformatics/Individual project/data/Cont_gluc')
+write.csv(final_data,file = 'Cont_monit_data.csv')
+```
+
+Now im gonna save each day in a separate file to make the data easier to manage and index
+
+```{r}
+# Load in data from shared file
+data <- read_csv('/Users/harrypetchsmith/Msc Bionformatics/Individual project/data/Cont_gluc/Cont_monit_data.csv')
+
+View(data)
+```
+I can get each unique day as below;
+
+```{r}
+# get each unique day 
+data$date <-format(data$date, format = "%Y/%m/%d")
+days <- unique(data[,'date'])
+days <- as.list(days)
+```
+
+Now we can filter out each day and save them to a file.
+
+```{r}
+# Set working directory
+setwd('/Users/harrypetchsmith/Msc Bionformatics/Individual project/data/cont_gluc/Days')
+
+for(i in 1:length(days[[1]])){
+  day <- days[[1]][i]
+  filt <-  filter(data, date == day)
+  filename <- paste0(gsub('/','-',day),'.csv') 
+  write.csv(filt, file = filename)
+  }
+```
+
+
+## Graphing the data 
+Its difficult to visualise the data in this format so i generated graphs of each day as follows:
+
+```{r}
+files <- list.files(path="/Users/harrypetchsmith/Msc Bionformatics/Individual project/data/cont_gluc/Days", pattern="*.csv", full.names=TRUE, recursive=FALSE)
+
+setwd('/Users/harrypetchsmith/Msc Bionformatics/Individual project/data/cont_gluc/Days/Graphs')
+for (file in files){
+  date <- df$date[1]
+  df <- read.csv(file = file)
+  x <- df$minutes
+  y <- df$GlucoseValue
+  ggplot(data = df, aes(x = x, y = y)) + geom_point() + geom_line(aes(group = 1)) + theme(axis.text.x=element_text(color="#993333",size=2, angle=90)) + xlab('Time (minutes)') + ylab('Glucose Value')
+  filename <- paste0(gsub('/','-', date),'.png')
+  ggsave(filename)
+}
+```
+
+
+```{r}
+# Set directory
+setwd('/Users/harrypetchsmith/Msc Bionformatics/Individual project/data/cont_gluc/Days')
+# Load in first day
+day1 <- read.csv('2017-07-15.csv')
+
+
+date <- day1$date[1]
+filename <- paste0(gsub('/','-',day),'.pdf') 
+date 
+```
+
+2015-05-11
+-12
+-13
+
+
+
+

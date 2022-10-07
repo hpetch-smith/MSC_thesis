@@ -1,0 +1,292 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+# Predicting blood glucose using a multiple output GP.
+
+The data can be found under: ~/individual project/data/cont_gluc. The data is split up into days. 
+
+## 1. Inspecting the data 
+Each data file represents a day of glucose monitoring. First i will visualise some of the data.
+
+The first day (as appears in original data) is as follows
+```{r}
+# Set directory
+setwd('~/Individual project/data/Cont_gluc/Days')
+# Load in first day
+day1 <- read.csv('2015-05-11.csv')
+# Inspect
+View(day1)
+
+```
+
+Line plot of day 1:
+
+```{r}
+library(ggplot2)
+
+# Get the first 134 elements so both datasets are equal
+day1 = day1
+
+# Set x and y values
+x = day1$minutes
+y = day1$GlucoseValue
+
+# Generate plot of first day and save
+plot1 <- ggplot(data = day1, aes(x = x, y = y)) + geom_point(colour = '#0886bd') + ggtitle('2015/05/11 Continous Monitoring Glucose Data') + xlab('Time (minutes)') + ylab('Glucose Value')
+ggsave('2015-05-11 Continous Monitoring Glucose Data.pdf')
+```
+lets check out the subsequent day
+
+```{r}
+# Set directory
+setwd('~/Individual project/data/Cont_gluc/Days')
+# Read day2 file
+day2 <- read.csv('2015-05-12.csv')
+# inspect
+View(day2)
+```
+
+We can plot this data as follows
+
+```{r}
+library(ggplot2)
+# Filter out entries to the same size as day1
+day2 <- day2[1:279,]
+
+# set x and y values
+x = day2$minutes
+y = day2$GlucoseValue
+
+# Generate plot of day2 and save
+plot2 <- ggplot(data = day2, aes(x = x, y = y)) + geom_point(colour = 'red') + ggtitle('2015/05/12 Continous Monitoring Glucose Data') + xlab('Time (minutes)') + ylab('Glucose Value')
+ggsave('2015-05-12 Continous Monitoring Glucose Data.pdf')
+```
+I've set these two days to have the same number of values. Day2 was much bigger and required a lot of time to run.
+
+After initial inspection of the data i began to build the model on the data.
+
+## 2. Building the model
+The model source can be found here:
+Code/R code/2GP_functions.R
+
+```{r}
+source('C:/Users/Harry/Documents/Individual project/Code/R code/2GP_functions.R')
+```
+
+First i define my time series and Y values for each of the two days.
+```{r}
+# Time series for day1
+t1 <- day1$minutes
+#Y vakues for day1
+Y1 <- day1$GlucoseValue
+
+#Time series for day2
+t2 <- day2$minutes
+# Y values for day2
+Y2 <- day2$GlucoseValue
+
+# Overall total of time series 
+T = day1$minutes
+```
+
+The time series defined above were combined into vectors below. 
+
+```{r}
+# vector with both time series 
+t <- c(t1, t2)
+# Vector with Y values
+Y <- c(Y1, Y2)
+# Y should be 134*2
+length(Y)
+# number of samples in each series - 134
+N1 <- length(t1)
+N2 <- length(t2)
+```
+I generated a combined plot of the two days as follows:
+
+```{r}
+# df for day1
+day1 <- data.frame(x = t1, y = Y1)
+#df for day2
+day2 <- data.frame(x = t2, y = Y2)
+
+# Shared plot of both days
+plot3 <- ggplot() + 
+geom_line(data=day1, aes(x, y,group = 1), colour = '#0886bd') + 
+geom_line(data=day2, aes(x, y, group = 1), color='red') + ggtitle('2015/05/11 and 2015/05/12 Continous Monitoring Glucose Data') + xlab('Time (minutes)') + ylab('Glucose Value')
+ggsave('shared.pdf') 
+```
+The data was inspected in the window below 
+```{r}
+library(ggpubr)
+# Generate figure panels
+ggarrange(plot1,plot2,plot3,
+          nrow = 3,labels = c('A','B','C'))
+                  
+```
+Since this is a Baysian method, we work off a prior assumption and update this based on obsereved data. Our prior assumptions were made as to the distribution of the data and parameters
+
+I am assuming a normal distribution mean and standard deviation for the prior distribution. Parameters were sampled from this distribution:
+
+```{r}
+#--------Hyper-parameters--------------------------------------------
+# Parametrs = [V,F,W,G,B,mu]
+mean_vi <- 0
+sd_vi <- 3
+
+mean_wi <- 0
+sd_wi <- 3
+
+mean_fi <- 0
+sd_fi <- 3
+
+mean_gi <- 0
+sd_gi <- 3
+
+mean_bi <- -2
+sd_bi <- 3
+
+mean_mu <- 0.5
+sd_mu <- 3
+
+# Prior parameters vector
+pr_par <- c(mean_vi, sd_vi, mean_wi, sd_wi, mean_fi, sd_fi, mean_gi, sd_gi, mean_bi, sd_bi, mean_mu, sd_mu)
+```
+
+These parameters can be sampled randomly from their prior distributions as initial guesses:
+
+```{r}
+#--------Sampling--------------------------------------------
+vi <- rnorm(2, mean_vi, sd = sd_vi) # A_i = \exp{f_i}, B_i = \exp{g_i}; \sigma_i = \exp{\beta_i}, so I will need to square it later
+wi <- rnorm(2, mean_wi, sd = sd_wi)
+fi <- rnorm(2, mean_fi, sd = sd_fi)
+gi <- rnorm(2, mean_gi, sd = sd_gi)
+bi <- rnorm(2, mean_bi, sd = sd_bi)
+mu <- rnorm(1, mean_mu, sd = sd_mu)
+
+par <- c(vi[1], wi[1], fi[1], gi[1], bi[1], vi[2], wi[2], fi[2], gi[2], bi[2], mu) #parameters to estimate; [v1 w1 f1 g1 Beta1 v2 w2 f2 g2 Beta2 mu];
+```
+
+Lets try calculating a covariance matrix from these parameters. This was doen as an example to test if the code works.
+
+```{r}
+# Calculate covariance matrix
+D <- Covariance(par, t1, t2)
+# View covariance matrix as a data frame 
+df <- data.frame(matrix(unlist(D), nrow=length(D), byrow=TRUE))
+View(D)
+```
+
+Now i train the model.
+
+```{r}
+source('C:/Users/Harry/Documents/Individual project/Code/R code/2GP_functions.R')
+par_optim <- optim(par, log_lik, method = "Nelder-Mead", Y = Y, t1 = t1, t2 = t2, prior = pr_par)
+```
+
+once the model is trained i retrieve the optimal parameters
+
+```{r}
+# Optimised parameters
+par_opt <- par_optim$par
+
+# Calculte covarinace matrix
+C <- Covariance(par_opt, t1, t2)
+
+# Solve matrix for smaller values in calculations
+C_I <- solve(C)
+
+# Get samples for time series
+s_in <- seq(min(T), max(T), length = length(t1))
+```
+
+Finally we can make the calculations to retrieve our posterior outputs:
+
+```{r}
+#----------------OUTPUT1_Y1------------------------------------------------------------------------
+#Cross covariance
+PR12 <- c(par_opt[1], par_opt[6], par_opt[3], par_opt[8], par_opt[11]) #v1 v2 f1 f2 mu
+# Autocovariance
+PR11 <- par_opt[1:4] # v1,w1,f1,g1
+kapa1 <- C_ii(PR11, 0) + exp(par_opt[5])^2   # or kapa1 = par_opt(1)^2+par_opt(2)^2+exp(par_opt(5))^2   #v_1^2 + w_1^2 + sigma_1^2
+# Empyt vector to store output
+output1 <- c()
+sg_sqr1 <- c()
+
+# Loop through each sample
+for (j in 1:length(s_in)){
+	k1 <- c()
+	# Calculate K values within and between days
+        for (i in 1:N1){
+            k1 <- c(k1, C_ii(PR11, s_in[j] - t1[i]))
+        }
+        for (ii in 1:N2){
+            k1 <- c(k1, C_12(PR12, s_in[j] - t2[ii]))
+        }
+	# Store ouputs and error margins 
+        output1 <- c(output1, t(k1) %*% C_I %*% Y)
+        sg_sqr1 <- c(sg_sqr1, kapa1 - t(k1) %*% C_I %*% k1)
+}
+
+# Upper and lower bounds
+y1.low  = output1 - 2 * sqrt(sg_sqr1)
+y1.high = output1 + 2 * sqrt(sg_sqr1)
+```
+
+The same was performed for the second day 
+
+```{r}
+#----------------OUTPUT2_Y2-------------------------------------------------------------------------
+#Autocovariance (Cross is same as abpve)
+PR22 <- par_opt[6:9] # v2,w2,f2,g2
+kapa2 <- C_ii(par_opt[6:9], 0) + exp(par_opt[10])^2 # or kapa2 = par_opt(6)^2+par_opt(7)^2+exp(par_opt(10))^2;
+
+# Empyt vectors for outputs
+output2 <- c()
+sg_sqr2 <-c()
+
+# Loop thrpugh each sample 
+for (j in 1:length(s_in)){
+    k2 <- c()
+    # Calculate K values 
+    for (i in 1:N1){
+        k2 <- c(k2, C_21(PR12, s_in[j] - t1[i]))
+    }
+    for (ii in 1:N2){
+        k2 <- c(k2, C_ii(PR22, s_in[j] - t2[ii]))
+    }
+    # Store ouptus and error
+    output2 <- c(output2, t(k2) %*% C_I %*% Y)
+    sg_sqr2 <- c(sg_sqr2, kapa2 - t(k2) %*% C_I %*% k2)
+}
+# Upper and lower bounds
+y2.low  = output2 - 2 * sqrt(sg_sqr2)
+y2.high = output2 + 2 * sqrt(sg_sqr2)
+```
+
+The results were visualised as follows
+
+
+```{r}
+library(ggplot2)
+
+# Visulaise Mean function and error regions.
+ggplot(data = data.frame(s_in,output1), aes(x = s_in, y = output1)) + 
+  geom_ribbon(aes(ymin = y1.low, ymax = y1.high), colour = '#9BA3F0', fill = '#9BA3F0', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t1,Y1), aes(x = t1, Y1), size = 0.4, colour = 'red') +
+  geom_line(data = data.frame(s_in,output1), aes(x = s_in, y = output1), colour = 'green', alpha = 0.8, size = 0.4) + xlab('Time (Minutes)') + ylab('Glucose Value')
+```
+
+```{r}
+library(ggplot2)
+
+# Visualise mean function and error regions
+ggplot(data = data.frame(s_in,output2), aes(x = s_in, y = output2)) + 
+  geom_ribbon(aes(ymin = y2.low, ymax = y2.high), colour = '#ED829C', fill = '#ED829C', alpha = 0.6, size = 0.1) +
+  geom_point(data = data.frame(t2,Y2), aes(x = t2, Y2), size = 0.4, colour = 'red') +
+  geom_line(data = data.frame(s_in,output2), aes(x = s_in, y = output2), colour = 'blue', alpha = 0.8, size = 0.4) + xlab('Time (Minutes)') + ylab('Glucose Value') 
+```
+
